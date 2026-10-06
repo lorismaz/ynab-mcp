@@ -2,7 +2,7 @@
 
 Self-hosted [Model Context Protocol](https://modelcontextprotocol.io) server for [YNAB](https://www.ynab.com/) (You Need A Budget). It speaks **streamable HTTP** and can create, update, and delete transactions on the plan behind a Personal Access Token.
 
-Intended public URL: `https://ynab.mazlabs.com/mcp`.
+Public URL (example): `https://your-host.example.com/mcp`.
 
 ## Why Rust
 
@@ -12,13 +12,13 @@ The HTTP service is **stateless**: each `POST /mcp` is a complete JSON-RPC messa
 
 ## Cursor
 
-In Cursor, add an MCP server with URL `https://ynab.mazlabs.com/mcp` and a bearer header. The same block works in an `mcp.json`:
+In Cursor, add an MCP server with URL `https://your-host.example.com/mcp` and a bearer header. The same block works in an `mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "ynab": {
-      "url": "https://ynab.mazlabs.com/mcp",
+      "url": "https://your-host.example.com/mcp",
       "headers": {
         "Authorization": "Bearer <MCP_AUTH_TOKEN>"
       }
@@ -77,7 +77,7 @@ Copy `.env.example` to `.env`. Do not commit `.env`.
 | `YNAB_API_BASE` | no | Default `https://api.ynab.com/v1` |
 | `YNAB_CACHE_TTL_SECONDS` | no | GET cache TTL. `0` disables it. Default `30` |
 | `YNAB_MAX_REQUESTS_PER_HOUR` | no | Local cap. `0` disables it. Default `180` |
-| `MCP_ALLOWED_HOSTS` | no | Comma-separated `Host` values allowed to call `/mcp`. Default `localhost,127.0.0.1,::1,ynab.mazlabs.com`. An entry without a port matches any port |
+| `MCP_ALLOWED_HOSTS` | no | Comma-separated `Host` values allowed to call `/mcp`. Default `localhost,127.0.0.1,::1`. Set this to your public hostname in production, for example `your-mcp.example.com`. An entry without a port matches any port |
 | `RUST_LOG` | no | Tracing filter. Default `info`. Tokens are not logged |
 
 Create a YNAB token under [Account Settings → Developer Settings](https://app.ynab.com/settings/developer). The token is stored only in the server environment. This process never prints it.
@@ -116,15 +116,16 @@ cargo test
 
 1. In Dokploy, create an application from this GitHub repository (`lorismaz/ynab-mcp`). Build with the repository `Dockerfile` (multi-stage Rust build, Debian slim runtime, non-root user).
 2. Set the container port to **8080**. The process listens on `0.0.0.0:$PORT`.
-3. Attach the domain **ynab.mazlabs.com** and enable HTTPS (Let's Encrypt through Dokploy).
+3. Attach your domain (for example **your-mcp.example.com**) and enable HTTPS (Let's Encrypt through Dokploy).
 4. Set environment variables:
    - `YNAB_API_KEY` — the Personal Access Token
    - `MCP_AUTH_TOKEN` — the shared bearer secret
    - `YNAB_PLAN_ID` — optional
+   - `MCP_ALLOWED_HOSTS` — the public hostname, for example `your-mcp.example.com` (the default is loopback only)
 5. Health check: HTTP `GET /health` expecting `200`. The image also defines a Docker `HEALTHCHECK` against that path.
-6. Deploy. Cursor should use `https://ynab.mazlabs.com/mcp` with `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+6. Deploy. Cursor should use `https://your-host.example.com/mcp` with `Authorization: Bearer <MCP_AUTH_TOKEN>`.
 
-The streamable HTTP handler checks the `Host` header. The default allow list includes `ynab.mazlabs.com`. If a proxy presents a different host, set `MCP_ALLOWED_HOSTS` to that host (and keep `ynab.mazlabs.com` if both are used).
+The streamable HTTP handler checks the `Host` header. The default allow list is loopback only (`localhost`, `127.0.0.1`, `::1`). Set `MCP_ALLOWED_HOSTS` to the hostname the proxy sends, for example `your-mcp.example.com`. Include loopback as well if local checks should keep working.
 
 One replica is enough. The server keeps its rate-limit window and GET cache in memory.
 

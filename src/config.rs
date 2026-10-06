@@ -92,12 +92,7 @@ impl Config {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|| {
-                vec![
-                    "localhost".into(),
-                    "127.0.0.1".into(),
-                    "::1".into(),
-                    "ynab.mazlabs.com".into(),
-                ]
+                vec!["localhost".into(), "127.0.0.1".into(), "::1".into()]
             });
         if allowed_hosts.is_empty() {
             return Err(StartupError::Invalid {
