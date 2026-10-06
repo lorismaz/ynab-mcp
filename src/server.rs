@@ -9,11 +9,14 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     args::{
-        ApprovalArgs, CreateCategoryArgs, CreateCategoryGroupArgs, CreateScheduledArgs,
-        CreateTransactionArgs, DeleteScheduledArgs, DeleteTransactionArgs, ListAccountsArgs,
-        ListCategoriesArgs, ListPayeesArgs, ListPlansArgs, ListTransactionsArgs, MonthSummaryArgs,
-        MoveMoneyArgs, PlanArgs, ScheduledInput, SubtransactionInput, TransactionInput,
-        TransactionPatch, UpdateCategoryBudgetArgs, UpdateScheduledArgs, UpdateTransactionArgs,
+        ApprovalArgs, CreateAccountArgs, CreateCategoryArgs, CreateCategoryGroupArgs,
+        CreatePayeeArgs, CreateScheduledArgs, CreateTransactionArgs, DeleteScheduledArgs,
+        DeleteTransactionArgs, GetCategoryArgs, GetPlanArgs, GetScheduledTransactionArgs,
+        GetTransactionArgs, GetUserArgs, ListAccountsArgs, ListCategoriesArgs,
+        ListMoneyMovementsArgs, ListPayeesArgs, ListPlansArgs, ListTransactionsArgs,
+        MonthSummaryArgs, MoveMoneyArgs, PlanArgs, ScheduledInput, SubtransactionInput,
+        TransactionInput, TransactionPatch, UpdateCategoryArgs, UpdateCategoryBudgetArgs,
+        UpdateCategoryGroupArgs, UpdatePayeeArgs, UpdateScheduledArgs, UpdateTransactionArgs,
     },
     money::milliunits_to_currency,
     present::present_money,
@@ -562,6 +565,339 @@ impl YnabServer {
         }))
     }
 
+    async fn update_category_inner(&self, args: UpdateCategoryArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let category_id = args.category_id.trim();
+        validate_path_id("category_id", category_id)?;
+        let mut category = Map::new();
+        if let Some(name) = args.name.as_deref() {
+            category.insert("name".into(), json!(require_trimmed("name", name, 200)?));
+        }
+        if let Some(note) = args.note.as_deref() {
+            let note = note.trim();
+            if note.is_empty() {
+                category.insert("note".into(), Value::Null);
+            } else {
+                check_len("note", note, 500)?;
+                category.insert("note".into(), json!(note));
+            }
+        }
+        if let Some(group_id) = optional_id("category_group_id", args.category_group_id.as_deref())?
+        {
+            category.insert("category_group_id".into(), json!(group_id));
+        }
+        if let Some(target) = &args.goal_target {
+            let milliunits = target.to_milliunits()?;
+            if milliunits < 0 {
+                return Err("goal_target must be zero or a positive currency amount".into());
+            }
+            category.insert("goal_target".into(), json!(milliunits));
+        }
+        if let Some(date) = args.goal_target_date.as_deref() {
+            let date = date.trim();
+            if !date.is_empty() {
+                category.insert("goal_target_date".into(), json!(normalize_date(date)?));
+            }
+        }
+        if let Some(whole) = args.goal_needs_whole_amount {
+            category.insert("goal_needs_whole_amount".into(), json!(whole));
+        }
+        if let Some(frequency) = args.goal_frequency {
+            if !category.contains_key("goal_target") {
+                return Err("goal_frequency requires goal_target".into());
+            }
+            if category.contains_key("goal_target_date") {
+                return Err("goal_frequency cannot be combined with goal_target_date".into());
+            }
+            category.insert(
+                "goal_frequency".into(),
+                serde_json::to_value(frequency).unwrap_or(Value::Null),
+            );
+        }
+        if category.is_empty() {
+            return Err("provide at least one field to change".into());
+        }
+        let path = format!("plans/{plan_id}/categories/{category_id}");
+        let mut response = self
+            .client
+            .patch(&path, json!({"category": Value::Object(category)}))
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(write_result(&plan_id, response))
+    }
+
+    async fn update_category_group_inner(
+        &self,
+        args: UpdateCategoryGroupArgs,
+    ) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let category_group_id = args.category_group_id.trim();
+        validate_path_id("category_group_id", category_group_id)?;
+        let name = require_trimmed("name", &args.name, 50)?;
+        let path = format!("plans/{plan_id}/category_groups/{category_group_id}");
+        let mut response = self
+            .client
+            .patch(&path, json!({"category_group": {"name": name}}))
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(write_result(&plan_id, response))
+    }
+
+    async fn create_account_inner(&self, args: CreateAccountArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let name = require_trimmed("name", &args.name, 200)?;
+        let path = format!("plans/{plan_id}/accounts");
+        let mut response = self
+            .client
+            .post(
+                &path,
+                json!({
+                    "account": {
+                        "name": name,
+                        "type": args.account_type,
+                        "balance": args.balance.to_milliunits()?,
+                    }
+                }),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(write_result(&plan_id, response))
+    }
+
+    async fn create_payee_inner(&self, args: CreatePayeeArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let name = require_trimmed("name", &args.name, 500)?;
+        let path = format!("plans/{plan_id}/payees");
+        let mut response = self
+            .client
+            .post(&path, json!({"payee": {"name": name}}))
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(write_result(&plan_id, response))
+    }
+
+    async fn update_payee_inner(&self, args: UpdatePayeeArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let payee_id = args.payee_id.trim();
+        validate_path_id("payee_id", payee_id)?;
+        let name = require_trimmed("name", &args.name, 500)?;
+        let path = format!("plans/{plan_id}/payees/{payee_id}");
+        let mut response = self
+            .client
+            .patch(&path, json!({"payee": {"name": name}}))
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(write_result(&plan_id, response))
+    }
+
+    async fn import_transactions_inner(&self, args: PlanArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let path = format!("plans/{plan_id}/transactions/import");
+        let mut response = self
+            .client
+            .post_without_body(&path)
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(write_result(&plan_id, response))
+    }
+
+    async fn list_months_inner(&self, args: PlanArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let path = format!("plans/{plan_id}/months");
+        let fetched = self
+            .client
+            .get_optional(&path, &[], CacheMode::Use)
+            .await
+            .map_err(|error| error.to_string())?;
+        let (months, knowledge) = match fetched {
+            None => (Vec::new(), None),
+            Some(mut body) => {
+                let knowledge = body.pointer("/data/server_knowledge").cloned();
+                present_money(&mut body);
+                let months = body
+                    .pointer("/data/months")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|month| {
+                        !month
+                            .get("deleted")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                (months, knowledge)
+            }
+        };
+        Ok(json!({
+            "plan_id": plan_id,
+            "server_knowledge": knowledge,
+            "months": months,
+        }))
+    }
+
+    async fn get_category_inner(&self, args: GetCategoryArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let category_id = args.category_id.trim();
+        validate_path_id("category_id", category_id)?;
+        let path = format!("plans/{plan_id}/categories/{category_id}");
+        let mut body = self
+            .client
+            .get(&path, &[], CacheMode::Use)
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut body);
+        Ok(json!({
+            "plan_id": plan_id,
+            "category": body.pointer("/data/category").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn get_user_inner(&self, _args: GetUserArgs) -> Result<Value, String> {
+        let body = self
+            .client
+            .get("user", &[], CacheMode::Use)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(json!({
+            "user": body.pointer("/data/user").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn get_plan_inner(&self, args: GetPlanArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let mut query: Vec<(String, String)> = Vec::new();
+        if let Some(knowledge) = args.since_server_knowledge {
+            query.push(("last_knowledge_of_server".into(), knowledge.to_string()));
+        }
+        let query_ref: Vec<(&str, &str)> = query
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        let cache = if args.since_server_knowledge.is_some() {
+            CacheMode::Bypass
+        } else {
+            CacheMode::Use
+        };
+        let path = format!("plans/{plan_id}");
+        let mut body = self
+            .client
+            .get(&path, &query_ref, cache)
+            .await
+            .map_err(|error| error.to_string())?;
+        let knowledge = body.pointer("/data/server_knowledge").cloned();
+        present_money(&mut body);
+        Ok(json!({
+            "plan_id": plan_id,
+            "server_knowledge": knowledge,
+            "plan": body.pointer("/data/plan").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn get_plan_settings_inner(&self, args: PlanArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let path = format!("plans/{plan_id}/settings");
+        let body = self
+            .client
+            .get(&path, &[], CacheMode::Use)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(json!({
+            "plan_id": plan_id,
+            "settings": body.pointer("/data/settings").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn list_money_movements_inner(
+        &self,
+        args: ListMoneyMovementsArgs,
+    ) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let month = match args.month.as_deref() {
+            Some(month) => Some(normalize_month(month)?),
+            None => None,
+        };
+        let path = match &month {
+            Some(month) => format!("plans/{plan_id}/months/{month}/money_movements"),
+            None => format!("plans/{plan_id}/money_movements"),
+        };
+        let fetched = self
+            .client
+            .get_optional(&path, &[], CacheMode::Use)
+            .await
+            .map_err(|error| error.to_string())?;
+        let (movements, knowledge) = match fetched {
+            None => (Vec::new(), None),
+            Some(mut body) => {
+                let knowledge = body.pointer("/data/server_knowledge").cloned();
+                present_money(&mut body);
+                let movements = body
+                    .pointer("/data/money_movements")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                (movements, knowledge)
+            }
+        };
+        Ok(json!({
+            "plan_id": plan_id,
+            "month": month,
+            "server_knowledge": knowledge,
+            "money_movements": movements,
+        }))
+    }
+
+    async fn get_transaction_inner(&self, args: GetTransactionArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let transaction_id = args.transaction_id.trim();
+        validate_path_id("transaction_id", transaction_id)?;
+        let path = format!("plans/{plan_id}/transactions/{transaction_id}");
+        let mut body = self
+            .client
+            .get(&path, &[], CacheMode::Use)
+            .await
+            .map_err(|error| error.to_string())?;
+        let knowledge = body.pointer("/data/server_knowledge").cloned();
+        present_money(&mut body);
+        Ok(json!({
+            "plan_id": plan_id,
+            "server_knowledge": knowledge,
+            "transaction": body.pointer("/data/transaction").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn get_scheduled_transaction_inner(
+        &self,
+        args: GetScheduledTransactionArgs,
+    ) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let id = args.scheduled_transaction_id.trim();
+        validate_path_id("scheduled_transaction_id", id)?;
+        let path = format!("plans/{plan_id}/scheduled_transactions/{id}");
+        let mut body = self
+            .client
+            .get(&path, &[], CacheMode::Use)
+            .await
+            .map_err(|error| error.to_string())?;
+        let knowledge = body.pointer("/data/server_knowledge").cloned();
+        present_money(&mut body);
+        Ok(json!({
+            "plan_id": plan_id,
+            "server_knowledge": knowledge,
+            "scheduled_transaction": body
+                .pointer("/data/scheduled_transaction")
+                .cloned()
+                .unwrap_or(Value::Null),
+        }))
+    }
+
     async fn update_budget_inner(&self, args: UpdateCategoryBudgetArgs) -> Result<Value, String> {
         let plan_id = self.plan_id(args.plan_id)?;
         let month = normalize_month(&args.month)?;
@@ -953,6 +1289,216 @@ impl YnabServer {
     }
 
     #[tool(
+        description = "Update a category's name, note, group, or goal. Omitted fields stay unchanged. An empty note clears it. goal_target is currency units. goal_frequency (monthly, weekly, yearly) requires goal_target and cannot be combined with goal_target_date. This does not change the assigned amount; use update_category_budget for that.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn update_category(
+        &self,
+        Parameters(args): Parameters<UpdateCategoryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.update_category_inner(args).await)
+    }
+
+    #[tool(
+        description = "Rename a category group. name is required and at most 50 characters.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn update_category_group(
+        &self,
+        Parameters(args): Parameters<UpdateCategoryGroupArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.update_category_group_inner(args).await)
+    }
+
+    #[tool(
+        description = "Create an account. type is checking, savings, cash, creditCard, otherAsset, or otherLiability. balance is the starting balance in currency units.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn create_account(
+        &self,
+        Parameters(args): Parameters<CreateAccountArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.create_account_inner(args).await)
+    }
+
+    #[tool(
+        description = "Create a payee. name is required and at most 500 characters. YNAB also creates a payee when a transaction uses a new payee_name.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn create_payee(
+        &self,
+        Parameters(args): Parameters<CreatePayeeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.create_payee_inner(args).await)
+    }
+
+    #[tool(
+        description = "Rename a payee. name is required and at most 500 characters.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn update_payee(
+        &self,
+        Parameters(args): Parameters<UpdatePayeeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.update_payee_inner(args).await)
+    }
+
+    #[tool(
+        description = "Import available transactions from every linked account on the plan. Same as Import in YNAB. Returns the imported transaction ids. There is no request body.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn import_transactions(
+        &self,
+        Parameters(args): Parameters<PlanArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.import_transactions_inner(args).await)
+    }
+
+    #[tool(
+        description = "List plan months with income, assigned, activity, and Ready to Assign in currency units. Deleted months are omitted.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn list_months(
+        &self,
+        Parameters(args): Parameters<PlanArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.list_months_inner(args).await)
+    }
+
+    #[tool(
+        description = "Get one category for the current plan month, including assigned, activity, available, and goal fields in currency units.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn get_category(
+        &self,
+        Parameters(args): Parameters<GetCategoryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.get_category_inner(args).await)
+    }
+
+    #[tool(
+        description = "Get the YNAB user id for the access token. This call does not use a plan.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn get_user(
+        &self,
+        Parameters(args): Parameters<GetUserArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.get_user_inner(args).await)
+    }
+
+    #[tool(
+        description = "Get one plan, including its accounts, categories, payees, months, and transactions. This is a full export and costs one request; prefer the narrower list tools. since_server_knowledge returns only changes since that cursor.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn get_plan(
+        &self,
+        Parameters(args): Parameters<GetPlanArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.get_plan_inner(args).await)
+    }
+
+    #[tool(
+        description = "Get a plan's date format and currency format.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn get_plan_settings(
+        &self,
+        Parameters(args): Parameters<PlanArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.get_plan_settings_inner(args).await)
+    }
+
+    #[tool(
+        description = "List money movements between categories, or between a category and Ready to Assign. Amounts are currency units. Pass month (YYYY-MM or current) to limit to one month.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn list_money_movements(
+        &self,
+        Parameters(args): Parameters<ListMoneyMovementsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.list_money_movements_inner(args).await)
+    }
+
+    #[tool(
+        description = "Get one transaction by id. Amounts are currency units.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn get_transaction(
+        &self,
+        Parameters(args): Parameters<GetTransactionArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.get_transaction_inner(args).await)
+    }
+
+    #[tool(
+        description = "Get one scheduled transaction by id. Amounts are currency units.",
+        annotations(
+            read_only_hint = true,
+            open_world_hint = true,
+            destructive_hint = false
+        )
+    )]
+    async fn get_scheduled_transaction(
+        &self,
+        Parameters(args): Parameters<GetScheduledTransactionArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.get_scheduled_transaction_inner(args).await)
+    }
+
+    #[tool(
         description = "Set or adjust a category's assigned amount for a month. assigned replaces the amount; adjust_by adds a currency delta. This is how money is assigned from Ready to Assign.",
         annotations(
             read_only_hint = false,
@@ -1030,9 +1576,16 @@ impl YnabServer {
 
 #[tool_handler(
     name = "ynab",
-    instructions = "Family YNAB budget server. Amounts are currency units such as euros, never milliunits: expenses are negative (for example -12.50) and income is positive. Call list_plans when plan_id is unknown; otherwise omit plan_id to use the server default. Months accept YYYY-MM or current. list_transactions searches payee, category, and memo. Writes change the live plan. The YNAB API allows about 200 requests per hour, so filter by date and reuse ids from earlier reads. Scheduled transactions must have a future date. To transfer between accounts, use the destination account transfer_payee_id as payee_id. To add envelopes, call create_category_group, then create_category with that group's id. category_group_id is also on each category from list_categories."
+    instructions = "Family YNAB budget server. Amounts are currency units such as euros, never milliunits: expenses are negative (for example -12.50) and income is positive. Call list_plans when plan_id is unknown; otherwise omit plan_id to use the server default. Months accept YYYY-MM or current. list_transactions searches payee, category, and memo. Writes change the live plan. The YNAB API allows about 200 requests per hour, so filter by date and reuse ids from earlier reads. Scheduled transactions must have a future date. To transfer between accounts, use the destination account transfer_payee_id as payee_id. To add envelopes, call create_category_group, then create_category with that group's id. category_group_id is also on each category from list_categories. update_category changes name, note, group, or goal; update_category_budget changes the assigned amount. create_account needs name, type, and balance. import_transactions pulls linked-account transactions. get_plan is a full export; prefer narrower list tools."
 )]
 impl ServerHandler for YnabServer {}
+
+fn write_result(plan_id: &str, response: Value) -> Value {
+    json!({
+        "plan_id": plan_id,
+        "result": response.pointer("/data").cloned().unwrap_or(response),
+    })
+}
 
 fn finish(result: Result<Value, String>) -> Result<CallToolResult, ErrorData> {
     match result {

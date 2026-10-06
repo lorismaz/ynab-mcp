@@ -107,6 +107,12 @@ impl YnabClient {
             .await
     }
 
+    /// POST with no JSON body. Used by transaction import, which takes only a plan id.
+    pub async fn post_without_body(&self, path: &str) -> Result<Value, YnabError> {
+        self.send(Method::Post, path, &[], None, CacheMode::Bypass)
+            .await
+    }
+
     pub async fn put(&self, path: &str, body: Value) -> Result<Value, YnabError> {
         self.send(Method::Put, path, &[], Some(body), CacheMode::Bypass)
             .await
