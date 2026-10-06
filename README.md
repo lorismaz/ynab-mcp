@@ -29,7 +29,7 @@ In Cursor, add an MCP server with URL `https://your-host.example.com/mcp` and a 
 
 Replace `<MCP_AUTH_TOKEN>` with the same secret configured on the server. Anyone who has that secret can read and change the YNAB plan. Treat it like a password.
 
-`GET /health` does not require the bearer token, so a platform health check can use it. Every other path, including `/mcp`, rejects a missing or wrong `Authorization` header with `401`.
+`GET /health` does not require the bearer token. Every other path, including `/mcp`, rejects a missing or wrong `Authorization` header with `401`.
 
 ## Tools
 
@@ -100,34 +100,45 @@ cargo run --release
 curl -sS http://127.0.0.1:8080/health
 ```
 
-Docker Compose reads `.env` and publishes port 8080:
-
-```sh
-docker compose up --build
-```
-
 Tests, including a mocked YNAB API (no real token):
 
 ```sh
 cargo test
 ```
 
-## Deploy on Dokploy
+## Docker
 
-1. In Dokploy, create an application from this GitHub repository (`lorismaz/ynab-mcp`). Build with the repository `Dockerfile` (multi-stage Rust build, Debian slim runtime, non-root user).
-2. Set the container port to **8080**. The process listens on `0.0.0.0:$PORT`.
-3. Attach your domain (for example **your-mcp.example.com**) and enable HTTPS (Let's Encrypt through Dokploy).
-4. Set environment variables:
-   - `YNAB_API_KEY` — the Personal Access Token
-   - `MCP_AUTH_TOKEN` — the shared bearer secret
-   - `YNAB_PLAN_ID` — optional
-   - `MCP_ALLOWED_HOSTS` — the public hostname, for example `your-mcp.example.com` (the default is loopback only)
-5. Health check: HTTP `GET /health` expecting `200`. The image also defines a Docker `HEALTHCHECK` against that path.
-6. Deploy. Cursor should use `https://your-host.example.com/mcp` with `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+The image listens on `0.0.0.0:8080`. Publish that port. Pass secrets as environment variables; do not bake them into the image.
 
-The streamable HTTP handler checks the `Host` header. The default allow list is loopback only (`localhost`, `127.0.0.1`, `::1`). Set `MCP_ALLOWED_HOSTS` to the hostname the proxy sends, for example `your-mcp.example.com`. Include loopback as well if local checks should keep working.
+```sh
+docker build -t ynab-mcp .
+docker run --rm -p 8080:8080 \
+  -e YNAB_API_KEY \
+  -e MCP_AUTH_TOKEN \
+  -e YNAB_PLAN_ID \
+  -e MCP_ALLOWED_HOSTS \
+  ynab-mcp
+```
 
-One replica is enough. The server keeps its rate-limit window and GET cache in memory.
+`YNAB_API_KEY` and `MCP_AUTH_TOKEN` are required. `YNAB_PLAN_ID` is optional. `MCP_ALLOWED_HOSTS` is optional and defaults to `localhost,127.0.0.1,::1`. When the container is reached through another hostname, set it to that name, for example `your-mcp.example.com`. An entry without a port matches any port. Include the loopback names as well if checks from inside the container should keep working.
+
+`docker compose up --build` reads `.env` and publishes port 8080.
+
+```yaml
+services:
+  ynab-mcp:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+```
+
+Health check: `GET /health` returns `200` and `{"status":"healthy","service":"ynab-mcp"}`. The image runs the same check. MCP is `POST /mcp` with `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+
+Point Cursor at `https://your-host.example.com/mcp`. Terminate TLS in front of the container if clients use HTTPS.
+
+The rate-limit window and GET cache live in memory in this process.
 
 ## HTTP surface
 
