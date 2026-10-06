@@ -120,6 +120,8 @@ async fn health_initialize_and_tools_over_http() {
         "update_transaction",
         "delete_transaction",
         "set_transaction_approval",
+        "create_category_group",
+        "create_category",
         "update_category_budget",
         "move_money",
         "create_scheduled_transaction",
@@ -186,6 +188,165 @@ async fn health_initialize_and_tools_over_http() {
     assert_eq!(create.authorization, format!("Bearer {YNAB_TOKEN}"));
     assert_eq!(create.body["transaction"]["amount"], json!(-12500));
     assert_eq!(create.body["transaction"]["approved"], json!(true));
+}
+
+#[tokio::test]
+async fn create_category_and_group_over_http() {
+    let hits = Hits::default();
+    let ynab_base = spawn_ynab_categories(hits.clone()).await;
+    let config = Config::for_test(ynab_base, MCP_TOKEN, YNAB_TOKEN);
+    let app = build_router(config).expect("router");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let root = format!("http://{address}");
+
+    let grouped = mcp_call(
+        &client,
+        &root,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "create_category_group",
+                "arguments": {"plan_id": "plan-1", "name": "  Vacances  "}
+            }
+        }),
+    )
+    .await;
+    assert_eq!(grouped["result"]["isError"], false);
+    let grouped_text = grouped["result"]["content"][0]["text"].as_str().unwrap();
+    let grouped_json: Value = serde_json::from_str(grouped_text).unwrap();
+    assert_eq!(grouped_json["plan_id"], "plan-1");
+    assert_eq!(grouped_json["result"]["category_group"]["id"], "group-1");
+    assert_eq!(grouped_json["result"]["category_group"]["name"], "Vacances");
+
+    let created = mcp_call(
+        &client,
+        &root,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "create_category",
+                "arguments": {
+                    "plan_id": "plan-1",
+                    "category_group_id": "group-1",
+                    "name": " Hotel ",
+                    "note": "Mazafati",
+                    "goal_target": 1500,
+                    "goal_target_date": "2026-08-01",
+                    "goal_needs_whole_amount": false
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(created["result"]["isError"], false);
+    let created_text = created["result"]["content"][0]["text"].as_str().unwrap();
+    let created_json: Value = serde_json::from_str(created_text).unwrap();
+    assert_eq!(created_json["result"]["category"]["id"], "cat-1");
+    assert_eq!(
+        created_json["result"]["category"]["goal_target"],
+        json!(1500.0)
+    );
+    assert_eq!(created_json["result"]["category"]["assigned"], json!(0.0));
+    assert!(!created_text.contains(YNAB_TOKEN));
+
+    let blank = mcp_call(
+        &client,
+        &root,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "create_category",
+                "arguments": {
+                    "plan_id": "plan-1",
+                    "category_group_id": "group-1",
+                    "name": "   "
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(blank["result"]["isError"], true);
+    let blank_text = blank["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(blank_text.contains("name is required"), "{blank_text}");
+
+    let long_group = mcp_call(
+        &client,
+        &root,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "create_category_group",
+                "arguments": {"plan_id": "plan-1", "name": "x".repeat(51)}
+            }
+        }),
+    )
+    .await;
+    assert_eq!(long_group["result"]["isError"], true);
+    let long_text = long_group["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(long_text.contains("at most 50"), "{long_text}");
+
+    let negative_goal = mcp_call(
+        &client,
+        &root,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "create_category",
+                "arguments": {
+                    "plan_id": "plan-1",
+                    "category_group_id": "group-1",
+                    "name": "Hotel",
+                    "goal_target": -10
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(negative_goal["result"]["isError"], true);
+
+    let recorded = hits.requests.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    let group = &recorded[0];
+    assert_eq!(group.method, "POST");
+    assert_eq!(group.path, "/v1/plans/plan-1/category_groups");
+    assert_eq!(group.authorization, format!("Bearer {YNAB_TOKEN}"));
+    assert_eq!(group.body["category_group"]["name"], json!("Vacances"));
+    let category = &recorded[1];
+    assert_eq!(category.method, "POST");
+    assert_eq!(category.path, "/v1/plans/plan-1/categories");
+    assert_eq!(category.body["category"]["name"], json!("Hotel"));
+    assert_eq!(
+        category.body["category"]["category_group_id"],
+        json!("group-1")
+    );
+    assert_eq!(category.body["category"]["note"], json!("Mazafati"));
+    assert_eq!(category.body["category"]["goal_target"], json!(1_500_000));
+    assert_eq!(
+        category.body["category"]["goal_target_date"],
+        json!("2026-08-01")
+    );
+    assert_eq!(
+        category.body["category"]["goal_needs_whole_amount"],
+        json!(false)
+    );
 }
 
 async fn mcp_call(client: &reqwest::Client, root: &str, body: Value) -> Value {
@@ -304,6 +465,83 @@ async fn mock_create_transaction(
                 "account_name": "Checking",
                 "payee_name": "Boulangerie",
                 "subtransactions": []
+            }
+        }
+    }))
+}
+
+async fn spawn_ynab_categories(hits: Hits) -> String {
+    let app = Router::new()
+        .route(
+            "/v1/plans/{plan_id}/category_groups",
+            post(mock_create_category_group),
+        )
+        .route("/v1/plans/{plan_id}/categories", post(mock_create_category))
+        .with_state(hits);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://127.0.0.1:{port}/v1")
+}
+
+async fn mock_create_category_group(
+    State(hits): State<Hits>,
+    Path(plan_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    record(
+        &hits,
+        "POST",
+        &format!("/v1/plans/{plan_id}/category_groups"),
+        &headers,
+        body.clone(),
+    );
+    let name = body["category_group"]["name"].as_str().unwrap_or("");
+    Json(json!({
+        "data": {
+            "server_knowledge": 2,
+            "category_group": {
+                "id": "group-1",
+                "name": name,
+                "hidden": false,
+                "deleted": false
+            }
+        }
+    }))
+}
+
+async fn mock_create_category(
+    State(hits): State<Hits>,
+    Path(plan_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    record(
+        &hits,
+        "POST",
+        &format!("/v1/plans/{plan_id}/categories"),
+        &headers,
+        body,
+    );
+    Json(json!({
+        "data": {
+            "server_knowledge": 3,
+            "category": {
+                "id": "cat-1",
+                "category_group_id": "group-1",
+                "category_group_name": "Vacances",
+                "name": "Hotel",
+                "hidden": false,
+                "deleted": false,
+                "note": "Mazafati",
+                "budgeted": 0,
+                "activity": 0,
+                "balance": 0,
+                "goal_target": 1500000,
+                "goal_target_currency": 1500.0
             }
         }
     }))
