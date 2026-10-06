@@ -347,6 +347,153 @@ pub struct CreateCategoryArgs {
     pub goal_needs_whole_amount: Option<bool>,
 }
 
+/// Recurring NEED target cadence. YNAB rejects this together with goal_target_date.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum GoalFrequency {
+    #[serde(rename = "monthly")]
+    Monthly,
+    #[serde(rename = "weekly")]
+    Weekly,
+    #[serde(rename = "yearly")]
+    Yearly,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateCategoryArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    pub category_id: String,
+    /// New name, at most 200 characters. Omit to leave the name unchanged.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// New note, at most 500 characters. An empty string clears the note. Omit to leave it unchanged.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Move the category into this group. Internal groups are rejected by YNAB.
+    #[serde(default)]
+    pub category_group_id: Option<String>,
+    /// Goal target in currency units. Required when goal_frequency is set. Omit to leave the target unchanged.
+    #[serde(default)]
+    pub goal_target: Option<CurrencyAmount>,
+    /// Goal target date, YYYY-MM-DD. Cannot be combined with goal_frequency.
+    #[serde(default)]
+    pub goal_target_date: Option<String>,
+    /// For a Plan Your Spending goal: true sets aside the full target each period; false refills up to the target.
+    #[serde(default)]
+    pub goal_needs_whole_amount: Option<bool>,
+    /// Recurring target cadence: monthly, weekly, or yearly. Requires goal_target and replaces any existing target cadence.
+    #[serde(default)]
+    pub goal_frequency: Option<GoalFrequency>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateCategoryGroupArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    pub category_group_id: String,
+    /// New group name. YNAB allows at most 50 characters.
+    pub name: String,
+}
+
+/// Account types YNAB accepts when creating an account.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum AccountType {
+    #[serde(rename = "checking")]
+    Checking,
+    #[serde(rename = "savings")]
+    Savings,
+    #[serde(rename = "cash")]
+    Cash,
+    #[serde(rename = "creditCard")]
+    CreditCard,
+    #[serde(rename = "otherAsset")]
+    OtherAsset,
+    #[serde(rename = "otherLiability")]
+    OtherLiability,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateAccountArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    /// Account name, at most 200 characters.
+    pub name: String,
+    /// checking, savings, cash, creditCard, otherAsset, or otherLiability.
+    #[serde(rename = "type")]
+    pub account_type: AccountType,
+    /// Starting balance in currency units. Negative means the account owes money.
+    pub balance: CurrencyAmount,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreatePayeeArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    /// Payee name, at most 500 characters.
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdatePayeeArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    pub payee_id: String,
+    /// New payee name, at most 500 characters.
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCategoryArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    pub category_id: String,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct GetUserArgs {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetPlanArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    /// Delta cursor from a previous response's server_knowledge. This response is a full plan export.
+    #[serde(default)]
+    pub since_server_knowledge: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListMoneyMovementsArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    /// YYYY-MM, YYYY-MM-DD, or "current". Omit to list every month.
+    #[serde(default)]
+    pub month: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTransactionArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    pub transaction_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetScheduledTransactionArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    pub scheduled_transaction_id: String,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateCategoryBudgetArgs {
     /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.

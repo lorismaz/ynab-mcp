@@ -42,20 +42,34 @@ Outflows are negative (`-12.50`). Inflows are positive. A dot decimal (`-12.50`)
 | Tool | Access | What it does |
 | --- | --- | --- |
 | `list_plans` | read | Plans visible to the access token |
+| `get_plan` | read | One plan, including related entities. Full export; prefer narrower list tools |
+| `get_plan_settings` | read | Date format and currency format |
+| `get_user` | read | User id for the access token. No `plan_id` |
 | `list_accounts` | read | Accounts, balances, and `transfer_payee_id` |
+| `create_account` | write | New account. `name`, `type`, and `balance` (currency units) |
 | `list_categories` | read | Categories for a month, with assigned / activity / available |
+| `get_category` | read | One category for the current month, including its goal |
 | `get_month_summary` | read | Income, assigned, activity, Ready to Assign, and categories |
+| `list_months` | read | Every plan month, with income, assigned, activity, and Ready to Assign |
 | `list_transactions` | read | Transactions by date, account, category, payee, or text search |
+| `get_transaction` | read | One transaction by id |
+| `import_transactions` | write | Import linked-account transactions. No body; returns imported ids |
 | `list_scheduled_transactions` | read | Upcoming and recurring scheduled transactions |
+| `get_scheduled_transaction` | read | One scheduled transaction by id |
 | `list_payees` | read | Payees, including transfer payees |
+| `create_payee` | write | New payee. `name` is required and at most 500 characters |
+| `update_payee` | write | Rename a payee |
 | `create_transaction` | write | One transaction or several. Approved unless `approved` is false |
 | `update_transaction` | write | Patch one transaction, or several by id |
 | `delete_transaction` | write | Delete one transaction |
 | `set_transaction_approval` | write | Approve or unapprove. YNAB exposes this as the `approved` flag |
 | `create_category_group` | write | Create a category group. `name` is required and at most 50 characters |
+| `update_category_group` | write | Rename a category group. `name` is required and at most 50 characters |
 | `create_category` | write | Create a category in an existing group. Requires `name` and `category_group_id` |
+| `update_category` | write | Change name, note, group, or goal. Does not change the assigned amount |
 | `update_category_budget` | write | Set (`assigned`) or nudge (`adjust_by`) a category for a month |
 | `move_money` | write | Move a positive amount between categories, or to/from Ready to Assign |
+| `list_money_movements` | read | Movements between categories, or between a category and Ready to Assign |
 | `create_scheduled_transaction` | write | Future or recurring transaction |
 | `update_scheduled_transaction` | write | Update a scheduled transaction. Omitted fields stay as they are |
 | `delete_scheduled_transaction` | write | Delete a scheduled transaction |
@@ -63,6 +77,10 @@ Outflows are negative (`-12.50`). Inflows are positive. A dot decimal (`-12.50`)
 To transfer between accounts, call `list_accounts` and use the destination account's `transfer_payee_id` as `payee_id`.
 
 To add an envelope, call `create_category_group` (or reuse a group id from `list_categories`), then `create_category`. YNAB's plans API accepts both creates: `POST /plans/{plan_id}/category_groups` with `{ "category_group": { "name" } }`, and `POST /plans/{plan_id}/categories` with `{ "category": { "name", "category_group_id" } }`. Optional category fields are `note`, `goal_target` (currency units; YNAB stores milliunits and creates a monthly goal), `goal_target_date` (`YYYY-MM-DD`), and `goal_needs_whole_amount`. Category names are limited to 200 characters, notes to 500, and group names to 50. YNAB rejects an internal group such as Credit Card Payments. The response `result` object includes the new category or group and `server_knowledge`, with money fields in currency units.
+
+`update_category` sends `PATCH /plans/{plan_id}/categories/{category_id}` with only the fields you set: `name`, `note`, `category_group_id`, `goal_target`, `goal_target_date`, `goal_needs_whole_amount`, and `goal_frequency` (`monthly`, `weekly`, or `yearly`). Omitted fields stay as they are. An empty `note` clears the note. `goal_frequency` requires `goal_target` and cannot be combined with `goal_target_date`. It configures a recurring target and replaces the existing cadence. `update_category_group` sends `PATCH /plans/{plan_id}/category_groups/{category_group_id}` with `{ "category_group": { "name" } }`.
+
+`create_account` sends `POST /plans/{plan_id}/accounts` with `name`, `type` (`checking`, `savings`, `cash`, `creditCard`, `otherAsset`, `otherLiability`), and `balance` in milliunits. `create_payee` and `update_payee` send `name` only (at most 500 characters). `import_transactions` is `POST /plans/{plan_id}/transactions/import` with no body. `list_money_movements` calls `GET /plans/{plan_id}/money_movements`, or `GET /plans/{plan_id}/months/{month}/money_movements` when `month` is set. `get_plan` is `GET /plans/{plan_id}` and `get_plan_settings` is `GET /plans/{plan_id}/settings`. `get_user` is `GET /user`.
 
 Months accept `YYYY-MM`, `YYYY-MM-DD` (normalized to the first of that month), or `current`.
 
