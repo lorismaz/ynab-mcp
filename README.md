@@ -52,6 +52,8 @@ Outflows are negative (`-12.50`). Inflows are positive. A dot decimal (`-12.50`)
 | `update_transaction` | write | Patch one transaction, or several by id |
 | `delete_transaction` | write | Delete one transaction |
 | `set_transaction_approval` | write | Approve or unapprove. YNAB exposes this as the `approved` flag |
+| `create_category_group` | write | Create a category group. `name` is required and at most 50 characters |
+| `create_category` | write | Create a category in an existing group. Requires `name` and `category_group_id` |
 | `update_category_budget` | write | Set (`assigned`) or nudge (`adjust_by`) a category for a month |
 | `move_money` | write | Move a positive amount between categories, or to/from Ready to Assign |
 | `create_scheduled_transaction` | write | Future or recurring transaction |
@@ -59,6 +61,8 @@ Outflows are negative (`-12.50`). Inflows are positive. A dot decimal (`-12.50`)
 | `delete_scheduled_transaction` | write | Delete a scheduled transaction |
 
 To transfer between accounts, call `list_accounts` and use the destination account's `transfer_payee_id` as `payee_id`.
+
+To add an envelope, call `create_category_group` (or reuse a group id from `list_categories`), then `create_category`. YNAB's plans API accepts both creates: `POST /plans/{plan_id}/category_groups` with `{ "category_group": { "name" } }`, and `POST /plans/{plan_id}/categories` with `{ "category": { "name", "category_group_id" } }`. Optional category fields are `note`, `goal_target` (currency units; YNAB stores milliunits and creates a monthly goal), `goal_target_date` (`YYYY-MM-DD`), and `goal_needs_whole_amount`. Category names are limited to 200 characters, notes to 500, and group names to 50. YNAB rejects an internal group such as Credit Card Payments. The response `result` object includes the new category or group and `server_knowledge`, with money fields in currency units.
 
 Months accept `YYYY-MM`, `YYYY-MM-DD` (normalized to the first of that month), or `current`.
 

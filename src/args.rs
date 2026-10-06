@@ -316,6 +316,38 @@ pub struct ApprovalArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateCategoryGroupArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    /// Group name. YNAB allows at most 50 characters.
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateCategoryArgs {
+    /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    /// Existing category group id from list_categories or create_category_group. Internal groups are rejected by YNAB.
+    pub category_group_id: String,
+    /// Category name, at most 200 characters.
+    pub name: String,
+    /// Optional note stored on the category.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Optional goal target in currency units. When set, YNAB creates a monthly goal.
+    #[serde(default)]
+    pub goal_target: Option<CurrencyAmount>,
+    /// Optional goal target date, YYYY-MM-DD.
+    #[serde(default)]
+    pub goal_target_date: Option<String>,
+    /// For a Plan Your Spending goal: true sets aside the full target each period; false refills up to the target.
+    #[serde(default)]
+    pub goal_needs_whole_amount: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateCategoryBudgetArgs {
     /// Plan id from list_plans. Omit to use YNAB_PLAN_ID. "last-used" and "default" are allowed.
     #[serde(default)]

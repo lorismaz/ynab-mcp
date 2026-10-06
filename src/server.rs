@@ -9,11 +9,11 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     args::{
-        ApprovalArgs, CreateScheduledArgs, CreateTransactionArgs, DeleteScheduledArgs,
-        DeleteTransactionArgs, ListAccountsArgs, ListCategoriesArgs, ListPayeesArgs, ListPlansArgs,
-        ListTransactionsArgs, MonthSummaryArgs, MoveMoneyArgs, PlanArgs, ScheduledInput,
-        SubtransactionInput, TransactionInput, TransactionPatch, UpdateCategoryBudgetArgs,
-        UpdateScheduledArgs, UpdateTransactionArgs,
+        ApprovalArgs, CreateCategoryArgs, CreateCategoryGroupArgs, CreateScheduledArgs,
+        CreateTransactionArgs, DeleteScheduledArgs, DeleteTransactionArgs, ListAccountsArgs,
+        ListCategoriesArgs, ListPayeesArgs, ListPlansArgs, ListTransactionsArgs, MonthSummaryArgs,
+        MoveMoneyArgs, PlanArgs, ScheduledInput, SubtransactionInput, TransactionInput,
+        TransactionPatch, UpdateCategoryBudgetArgs, UpdateScheduledArgs, UpdateTransactionArgs,
     },
     money::milliunits_to_currency,
     present::present_money,
@@ -499,6 +499,69 @@ impl YnabServer {
         }))
     }
 
+    async fn create_category_group_inner(
+        &self,
+        args: CreateCategoryGroupArgs,
+    ) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let name = require_trimmed("name", &args.name, 50)?;
+        let path = format!("plans/{plan_id}/category_groups");
+        let mut response = self
+            .client
+            .post(&path, json!({"category_group": {"name": name}}))
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(json!({
+            "plan_id": plan_id,
+            "result": response.pointer("/data").cloned().unwrap_or(response),
+        }))
+    }
+
+    async fn create_category_inner(&self, args: CreateCategoryArgs) -> Result<Value, String> {
+        let plan_id = self.plan_id(args.plan_id)?;
+        let category_group_id = args.category_group_id.trim();
+        validate_path_id("category_group_id", category_group_id)?;
+        let name = require_trimmed("name", &args.name, 200)?;
+        let mut category = Map::new();
+        category.insert("name".into(), json!(name));
+        category.insert("category_group_id".into(), json!(category_group_id));
+        if let Some(note) = args.note.as_deref() {
+            let note = note.trim();
+            if !note.is_empty() {
+                check_len("note", note, 500)?;
+                category.insert("note".into(), json!(note));
+            }
+        }
+        if let Some(target) = &args.goal_target {
+            let milliunits = target.to_milliunits()?;
+            if milliunits < 0 {
+                return Err("goal_target must be zero or a positive currency amount".into());
+            }
+            category.insert("goal_target".into(), json!(milliunits));
+        }
+        if let Some(date) = args.goal_target_date.as_deref() {
+            let date = date.trim();
+            if !date.is_empty() {
+                category.insert("goal_target_date".into(), json!(normalize_date(date)?));
+            }
+        }
+        if let Some(whole) = args.goal_needs_whole_amount {
+            category.insert("goal_needs_whole_amount".into(), json!(whole));
+        }
+        let path = format!("plans/{plan_id}/categories");
+        let mut response = self
+            .client
+            .post(&path, json!({"category": Value::Object(category)}))
+            .await
+            .map_err(|error| error.to_string())?;
+        present_money(&mut response);
+        Ok(json!({
+            "plan_id": plan_id,
+            "result": response.pointer("/data").cloned().unwrap_or(response),
+        }))
+    }
+
     async fn update_budget_inner(&self, args: UpdateCategoryBudgetArgs) -> Result<Value, String> {
         let plan_id = self.plan_id(args.plan_id)?;
         let month = normalize_month(&args.month)?;
@@ -860,6 +923,36 @@ impl YnabServer {
     }
 
     #[tool(
+        description = "Create a category group. name is required and at most 50 characters. Use the returned category group id as category_group_id in create_category.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn create_category_group(
+        &self,
+        Parameters(args): Parameters<CreateCategoryGroupArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.create_category_group_inner(args).await)
+    }
+
+    #[tool(
+        description = "Create a category in an existing group. Requires name and category_group_id (from list_categories or create_category_group). Optional note, goal_target (currency units), goal_target_date (YYYY-MM-DD), and goal_needs_whole_amount. YNAB rejects internal groups such as Credit Card Payments.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn create_category(
+        &self,
+        Parameters(args): Parameters<CreateCategoryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finish(self.create_category_inner(args).await)
+    }
+
+    #[tool(
         description = "Set or adjust a category's assigned amount for a month. assigned replaces the amount; adjust_by adds a currency delta. This is how money is assigned from Ready to Assign.",
         annotations(
             read_only_hint = false,
@@ -937,7 +1030,7 @@ impl YnabServer {
 
 #[tool_handler(
     name = "ynab",
-    instructions = "Family YNAB budget server. Amounts are currency units such as euros, never milliunits: expenses are negative (for example -12.50) and income is positive. Call list_plans when plan_id is unknown; otherwise omit plan_id to use the server default. Months accept YYYY-MM or current. list_transactions searches payee, category, and memo. Writes change the live plan. The YNAB API allows about 200 requests per hour, so filter by date and reuse ids from earlier reads. Scheduled transactions must have a future date. To transfer between accounts, use the destination account transfer_payee_id as payee_id."
+    instructions = "Family YNAB budget server. Amounts are currency units such as euros, never milliunits: expenses are negative (for example -12.50) and income is positive. Call list_plans when plan_id is unknown; otherwise omit plan_id to use the server default. Months accept YYYY-MM or current. list_transactions searches payee, category, and memo. Writes change the live plan. The YNAB API allows about 200 requests per hour, so filter by date and reuse ids from earlier reads. Scheduled transactions must have a future date. To transfer between accounts, use the destination account transfer_payee_id as payee_id. To add envelopes, call create_category_group, then create_category with that group's id. category_group_id is also on each category from list_categories."
 )]
 impl ServerHandler for YnabServer {}
 
@@ -1018,6 +1111,15 @@ fn transaction_matches(transaction: &Value, query: &str) -> bool {
                 )
             })
         })
+}
+
+fn require_trimmed(label: &str, value: &str, max: usize) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("{label} is required"));
+    }
+    check_len(label, value, max)?;
+    Ok(value.to_string())
 }
 
 fn optional_date(label: &str, value: Option<&str>) -> Result<Option<String>, String> {
